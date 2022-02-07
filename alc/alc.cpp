@@ -155,11 +155,6 @@
 #include "backends/wave.h"
 #endif
 
-#ifdef ALSOFT_EAX
-#include "al/eax_globals.h"
-#include "al/eax_x_ram.h"
-#endif // ALSOFT_EAX
-
 
 FILE *gLogFile{stderr};
 #ifdef _DEBUG
@@ -205,9 +200,6 @@ struct BackendInfo {
 };
 
 BackendInfo BackendList[] = {
-#ifdef HAVE_PIPEWIRE
-    { "pipewire", PipeWireBackendFactory::getFactory },
-#endif
 #ifdef HAVE_PULSEAUDIO
     { "pulse", PulseBackendFactory::getFactory },
 #endif
@@ -229,14 +221,14 @@ BackendInfo BackendList[] = {
 #ifdef HAVE_SNDIO
     { "sndio", SndIOBackendFactory::getFactory },
 #endif
+#ifdef HAVE_JACK
+    { "jack", JackBackendFactory::getFactory },
+#endif
 #ifdef HAVE_ALSA
     { "alsa", AlsaBackendFactory::getFactory },
 #endif
 #ifdef HAVE_OSS
     { "oss", OSSBackendFactory::getFactory },
-#endif
-#ifdef HAVE_JACK
-    { "jack", JackBackendFactory::getFactory },
 #endif
 #ifdef HAVE_DSOUND
     { "dsound", DSoundBackendFactory::getFactory },
@@ -252,6 +244,9 @@ BackendInfo BackendList[] = {
 #endif
 
     { "null", NullBackendFactory::getFactory },
+#ifdef HAVE_PIPEWIRE
+    { "pipewire", PipeWireBackendFactory::getFactory },
+#endif
 #ifdef HAVE_WAVE
     { "wave", WaveBackendFactory::getFactory },
 #endif
@@ -880,14 +875,6 @@ constexpr struct {
     DECL(AL_SUPER_STEREO_WIDTH_SOFT),
 
     DECL(AL_STOP_SOURCES_ON_DISCONNECT_SOFT),
-
-#ifdef ALSOFT_EAX
-    DECL(AL_EAX_RAM_SIZE),
-    DECL(AL_EAX_RAM_FREE),
-    DECL(AL_STORAGE_AUTOMATIC),
-    DECL(AL_STORAGE_HARDWARE),
-    DECL(AL_STORAGE_ACCESSIBLE),
-#endif // ALSOFT_EAX
 };
 #undef DECL
 
@@ -1257,28 +1244,6 @@ void alc_initconfig(void)
     auto defrevopt = al::getenv("ALSOFT_DEFAULT_REVERB");
     if(defrevopt || (defrevopt=ConfigValueStr(nullptr, nullptr, "default-reverb")))
         LoadReverbPreset(defrevopt->c_str(), &ALCcontext::sDefaultEffect);
-
-#ifdef ALSOFT_EAX
-    {
-        constexpr auto eax_block_name = "eax";
-
-        const auto eax_enable_opt = ConfigValueBool(nullptr, eax_block_name, "enable");
-
-        if (eax_enable_opt)
-        {
-            eax_g_is_enabled = *eax_enable_opt;
-
-            if (!eax_g_is_enabled)
-            {
-                TRACE("%s\n", "EAX disabled by a configuration.");
-            }
-        }
-        else
-        {
-            eax_g_is_enabled = true;
-        }
-    }
-#endif // ALSOFT_EAX
 }
 #define DO_INITCONFIG() std::call_once(alc_config_once, [](){alc_initconfig();})
 
@@ -1465,6 +1430,15 @@ ALCenum EnumFromDevAmbi(DevAmbiScaling scaling)
  * existing ones. Based on Wine's DSound downmix values, which are based on
  * PulseAudio's.
  */
+const std::array<InputRemixMap,7> MonoDownmix{{
+    { FrontLeft,   {{{FrontCenter, 0.5f},      {LFE, 0.0f}}} },
+    { FrontRight,  {{{FrontCenter, 0.5f},      {LFE, 0.0f}}} },
+    { SideLeft,    {{{FrontCenter, 0.5f/9.0f}, {LFE, 0.0f}}} },
+    { SideRight,   {{{FrontCenter, 0.5f/9.0f}, {LFE, 0.0f}}} },
+    { BackLeft,    {{{FrontCenter, 0.5f/9.0f}, {LFE, 0.0f}}} },
+    { BackRight,   {{{FrontCenter, 0.5f/9.0f}, {LFE, 0.0f}}} },
+    { BackCenter,  {{{FrontCenter, 1.0f/9.0f}, {LFE, 0.0f}}} },
+}};
 const std::array<InputRemixMap,6> StereoDownmix{{
     { FrontCenter, {{{FrontLeft, 0.5f},      {FrontRight, 0.5f}}} },
     { SideLeft,    {{{FrontLeft, 1.0f/9.0f}, {FrontRight, 0.0f}}} },
@@ -1881,6 +1855,17 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
         DevFmtChannelsString(device->FmtChans), DevFmtTypeString(device->FmtType),
         device->Frequency, device->UpdateSize, device->BufferSize);
 
+    switch(device->FmtChans)
+    {
+    case DevFmtMono: device->RealOut.RemixMap = MonoDownmix; break;
+    case DevFmtStereo: device->RealOut.RemixMap = StereoDownmix; break;
+    case DevFmtQuad: device->RealOut.RemixMap = QuadDownmix; break;
+    case DevFmtX51: device->RealOut.RemixMap = X51Downmix; break;
+    case DevFmtX61: device->RealOut.RemixMap = X61Downmix; break;
+    case DevFmtX71: device->RealOut.RemixMap = X71Downmix; break;
+    case DevFmtAmbi3D: break;
+    }
+
     if(device->Type != DeviceType::Loopback)
     {
         if(auto modeopt = device->configValue<std::string>(nullptr, "stereo-mode"))
@@ -1913,20 +1898,6 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
     TRACE("Max sources: %d (%d + %d), effect slots: %d, sends: %d\n",
         device->SourcesMax, device->NumMonoSources, device->NumStereoSources,
         device->AuxiliaryEffectSlotMax, device->NumAuxSends);
-
-    switch(device->FmtChans)
-    {
-    case DevFmtMono: break;
-    case DevFmtStereo:
-        if(!device->mUhjEncoder)
-            device->RealOut.RemixMap = StereoDownmix;
-        break;
-    case DevFmtQuad: device->RealOut.RemixMap = QuadDownmix; break;
-    case DevFmtX51: device->RealOut.RemixMap = X51Downmix; break;
-    case DevFmtX61: device->RealOut.RemixMap = X61Downmix; break;
-    case DevFmtX71: device->RealOut.RemixMap = X71Downmix; break;
-    case DevFmtAmbi3D: break;
-    }
 
     nanoseconds::rep sample_delay{0};
     if(device->mUhjEncoder)
@@ -2162,9 +2133,6 @@ ALCenum UpdateDeviceParams(ALCdevice *device, const int *attrList)
             device->handleDisconnect("%s", e.what());
             return ALC_INVALID_DEVICE;
         }
-        TRACE("Post-start: %s, %s, %uhz, %u / %u buffer\n",
-            DevFmtChannelsString(device->FmtChans), DevFmtTypeString(device->FmtType),
-            device->Frequency, device->UpdateSize, device->BufferSize);
     }
 
     return ALC_NO_ERROR;
@@ -2250,7 +2218,7 @@ ContextRef VerifyContext(ALCcontext *context)
 /** Returns a new reference to the currently active context for this thread. */
 ContextRef GetContextRef(void)
 {
-    ALCcontext *context{ALCcontext::getThreadContext()};
+    ALCcontext *context{ALCcontext::sLocalContext};
     if(context)
         context->add_ref();
     else
@@ -2964,7 +2932,6 @@ START_API_FUNC
                 return enm.value;
         }
     }
-
     return 0;
 }
 END_API_FUNC
@@ -3074,7 +3041,6 @@ START_API_FUNC
         alcSetError(nullptr, ALC_INVALID_CONTEXT);
         return;
     }
-
     /* Hold a reference to this context so it remains valid until the ListLock
      * is released.
      */
@@ -3096,7 +3062,7 @@ END_API_FUNC
 ALC_API ALCcontext* ALC_APIENTRY alcGetCurrentContext(void)
 START_API_FUNC
 {
-    ALCcontext *Context{ALCcontext::getThreadContext()};
+    ALCcontext *Context{ALCcontext::sLocalContext};
     if(!Context) Context = ALCcontext::sGlobalContext.load();
     return Context;
 }
@@ -3105,7 +3071,7 @@ END_API_FUNC
 /** Returns the currently active thread-local context. */
 ALC_API ALCcontext* ALC_APIENTRY alcGetThreadContext(void)
 START_API_FUNC
-{ return ALCcontext::getThreadContext(); }
+{ return ALCcontext::sLocalContext; }
 END_API_FUNC
 
 ALC_API ALCboolean ALC_APIENTRY alcMakeContextCurrent(ALCcontext *context)
@@ -3132,8 +3098,8 @@ START_API_FUNC
      * thread-local context. Take ownership of the thread-local context
      * reference (if any), clearing the storage to null.
      */
-    ctx = ContextRef{ALCcontext::getThreadContext()};
-    if(ctx) ALCcontext::setThreadContext(nullptr);
+    ctx = ContextRef{ALCcontext::sLocalContext};
+    if(ctx) ALCcontext::sThreadContext.set(nullptr);
     /* Reset (decrement) the previous thread-local reference. */
 
     return ALC_TRUE;
@@ -3156,8 +3122,8 @@ START_API_FUNC
         }
     }
     /* context's reference count is already incremented */
-    ContextRef old{ALCcontext::getThreadContext()};
-    ALCcontext::setThreadContext(ctx.release());
+    ContextRef old{ALCcontext::sLocalContext};
+    ALCcontext::sThreadContext.set(ctx.release());
 
     return ALC_TRUE;
 }
@@ -3222,13 +3188,6 @@ START_API_FUNC
     device->SourcesMax = 256;
     device->AuxiliaryEffectSlotMax = 64;
     device->NumAuxSends = DEFAULT_SENDS;
-
-#ifdef ALSOFT_EAX
-    if (eax_g_is_enabled)
-    {
-        device->NumAuxSends = EAX_MAX_FXSLOTS;
-    }
-#endif // ALSOFT_EAX
 
     try {
         auto backend = PlaybackFactory->createBackend(device.get(), BackendType::Playback);
@@ -3356,21 +3315,6 @@ START_API_FUNC
             else
             {
                 device->mAmbiLayout = DevAmbiLayout::FuMa;
-                device->mAmbiScale = DevAmbiScaling::FuMa;
-            }
-        }
-        else if(al::strcasecmp(fmt, "acn+fuma") == 0)
-        {
-            if(device->mAmbiOrder > 3)
-                ERR("FuMa is incompatible with %d%s order ambisonics (up to third-order only)\n",
-                    device->mAmbiOrder,
-                    (((device->mAmbiOrder%100)/10) == 1) ? "th" :
-                    ((device->mAmbiOrder%10) == 1) ? "st" :
-                    ((device->mAmbiOrder%10) == 2) ? "nd" :
-                    ((device->mAmbiOrder%10) == 3) ? "rd" : "th");
-            else
-            {
-                device->mAmbiLayout = DevAmbiLayout::ACN;
                 device->mAmbiScale = DevAmbiScaling::FuMa;
             }
         }
@@ -3787,11 +3731,7 @@ START_API_FUNC
         ERR("%s\n", e.what());
         dev->handleDisconnect("%s", e.what());
         alcSetError(dev.get(), ALC_INVALID_DEVICE);
-        return;
     }
-    TRACE("Post-resume: %s, %s, %uhz, %u / %u buffer\n",
-        DevFmtChannelsString(device->FmtChans), DevFmtTypeString(device->FmtType),
-        device->Frequency, device->UpdateSize, device->BufferSize);
 }
 END_API_FUNC
 

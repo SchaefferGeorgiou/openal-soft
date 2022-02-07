@@ -95,8 +95,6 @@ option(ALSOFT_INSTALL_EXAMPLES "Install example programs (alplay, alstream, ...)
 option(ALSOFT_INSTALL_UTILS "Install utility programs (openal-info, alsoft-config, ...)" ON)
 option(ALSOFT_UPDATE_BUILD_VERSION "Update git build version info" ON)
 
-option(ALSOFT_EAX "Enable EAX extensions." $<BOOL:WIN32>)
-
 if(DEFINED SHARE_INSTALL_DIR)
     message(WARNING "SHARE_INSTALL_DIR is deprecated.  Use the variables provided by the GNUInstallDirs module instead")
     set(CMAKE_INSTALL_DATADIR "${SHARE_INSTALL_DIR}")
@@ -204,13 +202,11 @@ else()
 endif()
 unset(OLD_REQUIRED_LIBRARIES)
 
-if(ANDROID)
-    # Include liblog for Android logging
-    check_library_exists(log __android_log_print "" HAVE_LIBLOG)
-    if(HAVE_LIBLOG)
-        set(EXTRA_LIBS log ${EXTRA_LIBS})
-        set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} log)
-    endif()
+# Include liblog for Android logging
+check_library_exists(log __android_log_print "" HAVE_LIBLOG)
+if(HAVE_LIBLOG)
+    set(EXTRA_LIBS log ${EXTRA_LIBS})
+    set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} log)
 endif()
 
 if(MSVC)
@@ -630,7 +626,6 @@ set(COMMON_OBJS
     common/alfstream.h
     common/almalloc.cpp
     common/almalloc.h
-    common/alnumbers.h
     common/alnumeric.h
     common/aloptional.h
     common/alspan.h
@@ -641,6 +636,7 @@ set(COMMON_OBJS
     common/dynload.cpp
     common/dynload.h
     common/intrusive_ptr.h
+    common/math_defs.h
     common/opthelpers.h
     common/phase_shifter.h
     common/polyphase_resampler.cpp
@@ -768,7 +764,6 @@ set(OPENAL_OBJS
     al/effects/dedicated.cpp
     al/effects/distortion.cpp
     al/effects/echo.cpp
-	al/effects/effects.cpp
     al/effects/effects.h
     al/effects/equalizer.cpp
     al/effects/fshifter.cpp
@@ -817,30 +812,6 @@ set(ALC_OBJS
     alc/effects/vmorpher.cpp
     alc/inprogext.h
     alc/panning.cpp)
-
-if (ALSOFT_EAX)
-    set(OPENAL_OBJS
-        ${OPENAL_OBJS}
-        al/eax_api.cpp
-        al/eax_api.h
-        al/eax_eax_call.cpp
-        al/eax_eax_call.h
-        al/eax_effect.cpp
-        al/eax_effect.h
-        al/eax_exception.cpp
-        al/eax_exception.h
-        al/eax_fx_slot_index.cpp
-        al/eax_fx_slot_index.h
-        al/eax_fx_slots.cpp
-        al/eax_fx_slots.h
-        al/eax_globals.cpp
-        al/eax_globals.h
-        al/eax_utils.cpp
-        al/eax_utils.h
-        al/eax_x_ram.cpp
-        al/eax_x_ram.h
-)
-endif ()
 
 # Include SIMD mixers
 set(CPU_EXTS "Default")
@@ -948,9 +919,8 @@ if(PkgConfig_FOUND)
         option(ALSOFT_BACKEND_PIPEWIRE "Enable PipeWire backend" ON)
         if(ALSOFT_BACKEND_PIPEWIRE)
             set(HAVE_PIPEWIRE 1)
-            set(BACKENDS  "${BACKENDS} PipeWire${IS_LINKED},")
+            set(BACKENDS  "${BACKENDS} PipeWire,")
             set(ALC_OBJS  ${ALC_OBJS} alc/backends/pipewire.cpp alc/backends/pipewire.h)
-            add_backend_libs(${PIPEWIRE_LIBRARIES})
             set(INC_PATHS ${INC_PATHS} ${PIPEWIRE_INCLUDE_DIRS})
         endif()
     endif()
@@ -1328,7 +1298,6 @@ if(LIBTYPE STREQUAL "STATIC")
     add_library(${IMPL_TARGET} STATIC ${COMMON_OBJS} ${OPENAL_OBJS} ${ALC_OBJS} ${CORE_OBJS})
     target_compile_definitions(${IMPL_TARGET} PUBLIC AL_LIBTYPE_STATIC)
     target_link_libraries(${IMPL_TARGET} PRIVATE ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
-
     if(WIN32)
         # This option is for static linking OpenAL Soft into another project
         # that already defines the IDs. It is up to that project to ensure all
@@ -1484,18 +1453,8 @@ if(FPMATH_SET)
 ")
 endif()
 
-if(ALSOFT_EAX)
-    message(STATUS "Building with deprecated EAX extensions
-")
-endif()
-
 if(ALSOFT_EMBED_HRTF_DATA)
     message(STATUS "Embedding HRTF datasets
-")
-endif()
-
-if(ALSOFT_EAX)
-    message(STATUS "Enabled deprecated EAX extensions
 ")
 endif()
 

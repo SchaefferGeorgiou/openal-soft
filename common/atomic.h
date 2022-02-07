@@ -8,7 +8,9 @@
 namespace al {
 
 struct atomic_invflag : protected std::atomic_flag {
-    using std::atomic_flag::atomic_flag;
+    atomic_invflag() noexcept = default;
+    template<typename T>
+    atomic_invflag(T&& arg) noexcept : std::atomic_flag{std::forward<T>(arg)} { }
 
     inline bool test_and_clear(std::memory_order m=std::memory_order_seq_cst) noexcept
     { return !test_and_set(m); }

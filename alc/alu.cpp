@@ -40,7 +40,6 @@
 #include <utility>
 
 #include "almalloc.h"
-#include "alnumbers.h"
 #include "alnumeric.h"
 #include "alspan.h"
 #include "alstring.h"
@@ -72,6 +71,7 @@
 #include "core/voice.h"
 #include "core/voice_change.h"
 #include "intrusive_ptr.h"
+#include "math_defs.h"
 #include "opthelpers.h"
 #include "ringbuffer.h"
 #include "strutils.h"
@@ -505,16 +505,16 @@ bool CalcEffectSlotParams(EffectSlot *slot, EffectSlot **sorted_slots, ContextBa
 inline float ScaleAzimuthFront(float azimuth, float scale)
 {
     const float abs_azi{std::fabs(azimuth)};
-    if(!(abs_azi >= al::numbers::pi_v<float>*0.5f))
-        return std::copysign(minf(abs_azi*scale, al::numbers::pi_v<float>*0.5f), azimuth);
+    if(!(abs_azi >= al::MathDefs<float>::Pi()*0.5f))
+        return std::copysign(minf(abs_azi*scale, al::MathDefs<float>::Pi()*0.5f), azimuth);
     return azimuth;
 }
 
 /* Wraps the given value in radians to stay between [-pi,+pi] */
 inline float WrapRadians(float r)
 {
-    constexpr float Pi{al::numbers::pi_v<float>};
-    constexpr float Pi2{Pi*2.0f};
+    constexpr float Pi{al::MathDefs<float>::Pi()};
+    constexpr float Pi2{al::MathDefs<float>::Tau()};
     if(r >  Pi) return std::fmod(Pi+r, Pi2) - Pi;
     if(r < -Pi) return Pi - std::fmod(Pi-r, Pi2);
     return r;
@@ -617,18 +617,17 @@ void AmbiRotator(std::array<std::array<float,MaxAmbiChannels>,MaxAmbiChannels> &
     auto V = [P](const int l, const int m, const int n, const size_t last_band,
         const std::array<std::array<float,MaxAmbiChannels>,MaxAmbiChannels> &R)
     {
-        using namespace al::numbers;
         if(m > 0)
         {
             const bool d{m == 1};
             const float p0{P( 1, l,  m-1, n, last_band, R)};
             const float p1{P(-1, l, -m+1, n, last_band, R)};
-            return d ? p0*sqrt2_v<float> : (p0 - p1);
+            return d ? p0*std::sqrt(2.0f) : (p0 - p1);
         }
         const bool d{m == -1};
         const float p0{P( 1, l,  m+1, n, last_band, R)};
         const float p1{P(-1, l, -m-1, n, last_band, R)};
-        return d ? p1*sqrt2_v<float> : (p0 + p1);
+        return d ? p1*std::sqrt(2.0f) : (p0 + p1);
     };
     auto W = [P](const int l, const int m, const int n, const size_t last_band,
         const std::array<std::array<float,MaxAmbiChannels>,MaxAmbiChannels> &R)
@@ -677,9 +676,6 @@ void AmbiRotator(std::array<std::array<float,MaxAmbiChannels>,MaxAmbiChannels> &
 /* End ambisonic rotation helpers. */
 
 
-constexpr float Deg2Rad(float x) noexcept
-{ return static_cast<float>(al::numbers::pi / 180.0 * x); }
-
 struct GainTriplet { float Base, HF, LF; };
 
 void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, const float zpos,
@@ -687,7 +683,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
     const al::span<const GainTriplet,MAX_SENDS> WetGain, EffectSlot *(&SendSlots)[MAX_SENDS],
     const VoiceProps *props, const ContextParams &Context, const DeviceBase *Device)
 {
-    static constexpr ChanMap MonoMap[1]{
+    static const ChanMap MonoMap[1]{
         { FrontCenter, 0.0f, 0.0f }
     }, RearMap[2]{
         { BackLeft,  Deg2Rad(-150.0f), Deg2Rad(0.0f) },
@@ -780,7 +776,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
         break;
     }
 
-    voice->mFlags.reset(VoiceHasHrtf).reset(VoiceHasNfc);
+    voice->mFlags &= ~(VoiceHasHrtf | VoiceHasNfc);
     if(auto *decoder{voice->mDecoder.get()})
         decoder->mWidthControl = props->EnhWidth;
 
@@ -811,7 +807,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                 voice->mChans[0].mDryParams.NFCtrlFilter.adjust(w0);
             }
 
-            voice->mFlags.set(VoiceHasNfc);
+            voice->mFlags |= VoiceHasNfc;
         }
 
         /* Panning a B-Format sound toward some direction is easy. Just pan the
@@ -820,7 +816,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
          * panning.
          */
         const float coverage{!(Distance > std::numeric_limits<float>::epsilon()) ? 1.0f :
-            (al::numbers::inv_pi_v<float>/2.0f * Spread)};
+            (Spread * (1.0f/al::MathDefs<float>::Tau()))};
 
         auto calc_coeffs = [xpos,ypos,zpos](RenderMode mode)
         {
@@ -919,7 +915,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
             }
         }
     }
-    else if(DirectChannels != DirectMode::Off && !Device->RealOut.RemixMap.empty())
+    else if(DirectChannels != DirectMode::Off && Device->FmtChans != DevFmtAmbi3D)
     {
         /* Direct source channels always play local. Skip the virtual channels
          * and write inputs to the matching real outputs.
@@ -938,7 +934,6 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                 auto remap = std::find_if(Device->RealOut.RemixMap.cbegin(),
                     Device->RealOut.RemixMap.cend(), match_channel);
                 if(remap != Device->RealOut.RemixMap.cend())
-                {
                     for(const auto &target : remap->targets)
                     {
                         idx = GetChannelIdxByName(Device->RealOut, target.channel);
@@ -946,7 +941,6 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                             voice->mChans[c].mDryParams.Gains.Target[idx] = DryGain.Base *
                                 target.mix;
                     }
-                }
             }
         }
 
@@ -1044,7 +1038,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
             }
         }
 
-        voice->mFlags.set(VoiceHasHrtf);
+        voice->mFlags |= VoiceHasHrtf;
     }
     else
     {
@@ -1065,7 +1059,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                 for(size_t c{0};c < num_channels;c++)
                     voice->mChans[c].mDryParams.NFCtrlFilter.adjust(w0);
 
-                voice->mFlags.set(VoiceHasNfc);
+                voice->mFlags |= VoiceHasNfc;
             }
 
             /* Calculate the directional coefficients once, which apply to all
@@ -1116,7 +1110,7 @@ void CalcPanningAndFilters(Voice *voice, const float xpos, const float ypos, con
                 for(size_t c{0};c < num_channels;c++)
                     voice->mChans[c].mDryParams.NFCtrlFilter.adjust(w0);
 
-                voice->mFlags.set(VoiceHasNfc);
+                voice->mFlags |= VoiceHasNfc;
             }
 
             for(size_t c{0};c < num_channels;c++)
@@ -1392,8 +1386,7 @@ void CalcAttnSourceParams(Voice *voice, const VoiceProps *props, const ContextBa
     /* Calculate directional soundcones */
     if(directional && props->InnerAngle < 360.0f)
     {
-        constexpr float Rad2Deg{static_cast<float>(180.0 / al::numbers::pi)};
-        const float Angle{Rad2Deg*2.0f * std::acos(-Direction.dot_product(ToSource)) * ConeScale};
+        const float Angle{Rad2Deg(std::acos(-Direction.dot_product(ToSource)) * ConeScale * 2.0f)};
 
         float ConeGain, ConeHF;
         if(!(Angle > props->InnerAngle))
@@ -1525,7 +1518,7 @@ void CalcAttnSourceParams(Voice *voice, const VoiceProps *props, const ContextBa
 
     float spread{0.0f};
     if(props->Radius > Distance)
-        spread = al::numbers::pi_v<float>*2.0f - Distance/props->Radius*al::numbers::pi_v<float>;
+        spread = al::MathDefs<float>::Tau() - Distance/props->Radius*al::MathDefs<float>::Pi();
     else if(Distance > 0.0f)
         spread = std::asin(props->Radius/Distance) * 2.0f;
 

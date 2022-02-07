@@ -32,6 +32,8 @@
 
 #include <errno.h>
 
+#ifdef __linux__
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -44,37 +46,24 @@
 
 
 namespace dbus {
+    constexpr int TypeString{'s'};
+    constexpr int TypeVariant{'v'};
+    constexpr int TypeInt32{'i'};
+    constexpr int TypeUInt32{'u'};
+    constexpr int TypeInt64{'x'};
+    constexpr int TypeUInt64{'t'};
+    constexpr int TypeInvalid{'\0'};
 
-constexpr int TypeString{'s'};
-constexpr int TypeVariant{'v'};
-constexpr int TypeInt32{'i'};
-constexpr int TypeUInt32{'u'};
-constexpr int TypeInt64{'x'};
-constexpr int TypeUInt64{'t'};
-constexpr int TypeInvalid{'\0'};
-
-struct MessageDeleter {
-    void operator()(DBusMessage *m) { dbus_message_unref(m); }
-};
-using MessagePtr = std::unique_ptr<DBusMessage,MessageDeleter>;
-
+    struct MessageDeleter {
+        void operator()(DBusMessage *m) { (*pdbus_message_unref)(m); }
+    };
+    using MessagePtr = std::unique_ptr<DBusMessage,MessageDeleter>;
 } // namespace dbus
 
 namespace {
 
 inline pid_t _gettid()
-{
-#ifdef __linux__
-    return static_cast<pid_t>(syscall(SYS_gettid));
-#elif defined(__FreeBSD__)
-    long pid{};
-    thr_self(&pid);
-    return static_cast<pid_t>(pid);
-#else
-#warning gettid not available
-    return 0;
-#endif
-}
+{ return static_cast<pid_t>(syscall(SYS_gettid)); }
 
 int translate_error(const char *name)
 {
@@ -91,41 +80,41 @@ int translate_error(const char *name)
 
 int rtkit_get_int_property(DBusConnection *connection, const char *propname, long long *propval)
 {
-    dbus::MessagePtr m{dbus_message_new_method_call(RTKIT_SERVICE_NAME, RTKIT_OBJECT_PATH,
+    dbus::MessagePtr m{(*pdbus_message_new_method_call)(RTKIT_SERVICE_NAME, RTKIT_OBJECT_PATH,
         "org.freedesktop.DBus.Properties", "Get")};
     if(!m) return -ENOMEM;
 
     const char *interfacestr = RTKIT_SERVICE_NAME;
-    auto ready = dbus_message_append_args(m.get(),
+    auto ready = (*pdbus_message_append_args)(m.get(),
         dbus::TypeString, &interfacestr,
         dbus::TypeString, &propname,
         dbus::TypeInvalid);
     if(!ready) return -ENOMEM;
 
     dbus::Error error;
-    dbus::MessagePtr r{dbus_connection_send_with_reply_and_block(connection, m.get(), -1,
+    dbus::MessagePtr r{(*pdbus_connection_send_with_reply_and_block)(connection, m.get(), -1,
         &error.get())};
     if(!r) return translate_error(error->name);
 
-    if(dbus_set_error_from_message(&error.get(), r.get()))
+    if((*pdbus_set_error_from_message)(&error.get(), r.get()))
         return translate_error(error->name);
 
     int ret{-EBADMSG};
     DBusMessageIter iter{};
-    dbus_message_iter_init(r.get(), &iter);
-    while(int curtype{dbus_message_iter_get_arg_type(&iter)})
+    (*pdbus_message_iter_init)(r.get(), &iter);
+    while(int curtype{(*pdbus_message_iter_get_arg_type)(&iter)})
     {
         if(curtype == dbus::TypeVariant)
         {
             DBusMessageIter subiter{};
-            dbus_message_iter_recurse(&iter, &subiter);
+            (*pdbus_message_iter_recurse)(&iter, &subiter);
 
-            while((curtype=dbus_message_iter_get_arg_type(&subiter)) != dbus::TypeInvalid)
+            while((curtype=(*pdbus_message_iter_get_arg_type)(&subiter)) != dbus::TypeInvalid)
             {
                 if(curtype == dbus::TypeInt32)
                 {
                     dbus_int32_t i32{};
-                    dbus_message_iter_get_basic(&subiter, &i32);
+                    (*pdbus_message_iter_get_basic)(&subiter, &i32);
                     *propval = i32;
                     ret = 0;
                 }
@@ -133,15 +122,15 @@ int rtkit_get_int_property(DBusConnection *connection, const char *propname, lon
                 if(curtype == dbus::TypeInt64)
                 {
                     dbus_int64_t i64{};
-                    dbus_message_iter_get_basic(&subiter, &i64);
+                    (*pdbus_message_iter_get_basic)(&subiter, &i64);
                     *propval = i64;
                     ret = 0;
                 }
 
-                dbus_message_iter_next(&subiter);
+                (*pdbus_message_iter_next)(&subiter);
             }
         }
-        dbus_message_iter_next(&iter);
+        (*pdbus_message_iter_next)(&iter);
     }
 
     return ret;
@@ -149,6 +138,7 @@ int rtkit_get_int_property(DBusConnection *connection, const char *propname, lon
 
 } // namespace
 
+extern "C" {
 int rtkit_get_max_realtime_priority(DBusConnection *connection)
 {
     long long retval{};
@@ -175,27 +165,25 @@ int rtkit_make_realtime(DBusConnection *connection, pid_t thread, int priority)
 {
     if(thread == 0)
         thread = _gettid();
-    if(thread == 0)
-        return -ENOTSUP;
 
-    dbus::MessagePtr m{dbus_message_new_method_call(RTKIT_SERVICE_NAME, RTKIT_OBJECT_PATH,
+    dbus::MessagePtr m{(*pdbus_message_new_method_call)(RTKIT_SERVICE_NAME, RTKIT_OBJECT_PATH,
         "org.freedesktop.RealtimeKit1", "MakeThreadRealtime")};
     if(!m) return -ENOMEM;
 
     auto u64 = static_cast<dbus_uint64_t>(thread);
     auto u32 = static_cast<dbus_uint32_t>(priority);
-    auto ready = dbus_message_append_args(m.get(),
+    auto ready = (*pdbus_message_append_args)(m.get(),
         dbus::TypeUInt64, &u64,
         dbus::TypeUInt32, &u32,
         dbus::TypeInvalid);
     if(!ready) return -ENOMEM;
 
     dbus::Error error;
-    dbus::MessagePtr r{dbus_connection_send_with_reply_and_block(connection, m.get(), -1,
+    dbus::MessagePtr r{(*pdbus_connection_send_with_reply_and_block)(connection, m.get(), -1,
         &error.get())};
     if(!r) return translate_error(error->name);
 
-    if(dbus_set_error_from_message(&error.get(), r.get()))
+    if((*pdbus_set_error_from_message)(&error.get(), r.get()))
         return translate_error(error->name);
 
     return 0;
@@ -205,28 +193,48 @@ int rtkit_make_high_priority(DBusConnection *connection, pid_t thread, int nice_
 {
     if(thread == 0)
         thread = _gettid();
-    if(thread == 0)
-        return -ENOTSUP;
 
-    dbus::MessagePtr m{dbus_message_new_method_call(RTKIT_SERVICE_NAME, RTKIT_OBJECT_PATH,
+    dbus::MessagePtr m{(*pdbus_message_new_method_call)(RTKIT_SERVICE_NAME, RTKIT_OBJECT_PATH,
         "org.freedesktop.RealtimeKit1", "MakeThreadHighPriority")};
     if(!m) return -ENOMEM;
 
     auto u64 = static_cast<dbus_uint64_t>(thread);
     auto s32 = static_cast<dbus_int32_t>(nice_level);
-    auto ready = dbus_message_append_args(m.get(),
+    auto ready = (*pdbus_message_append_args)(m.get(),
         dbus::TypeUInt64, &u64,
         dbus::TypeInt32, &s32,
         dbus::TypeInvalid);
     if(!ready) return -ENOMEM;
 
     dbus::Error error;
-    dbus::MessagePtr r{dbus_connection_send_with_reply_and_block(connection, m.get(), -1,
+    dbus::MessagePtr r{(*pdbus_connection_send_with_reply_and_block)(connection, m.get(), -1,
         &error.get())};
     if(!r) return translate_error(error->name);
 
-    if(dbus_set_error_from_message(&error.get(), r.get()))
+    if((*pdbus_set_error_from_message)(&error.get(), r.get()))
         return translate_error(error->name);
 
     return 0;
 }
+} // extern "C"
+
+#else
+
+extern "C" {
+int rtkit_make_realtime(DBusConnection *connection, pid_t thread, int priority)
+{ return -ENOTSUP; }
+
+int rtkit_make_high_priority(DBusConnection *connection, pid_t thread, int nice_level)
+{ return -ENOTSUP; }
+
+int rtkit_get_max_realtime_priority(DBusConnection *connection)
+{ return -ENOTSUP; }
+
+int rtkit_get_min_nice_level(DBusConnection *connection, int *min_nice_level)
+{ return -ENOTSUP; }
+
+long long rtkit_get_rttime_usec_max(DBusConnection *connection)
+{ return -ENOTSUP; }
+} // extern "C"
+
+#endif

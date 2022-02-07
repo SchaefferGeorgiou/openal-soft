@@ -130,15 +130,13 @@ static const struct NameValuePair {
 }, ambiFormatList[] = {
     { "Default", "" },
     { "AmbiX (ACN, SN3D)", "ambix" },
-    { "Furse-Malham", "fuma" },
     { "ACN, N3D", "acn+n3d" },
-    { "ACN, FuMa", "acn+fuma" },
+    { "Furse-Malham", "fuma" },
 
     { "", "" }
 }, hrtfModeList[] = {
     { "1st Order Ambisonic", "ambi1" },
     { "2nd Order Ambisonic", "ambi2" },
-    { "3rd Order Ambisonic", "ambi3" },
     { "Default (Full)", "" },
     { "Full", "full" },
 
@@ -205,11 +203,7 @@ static QStringList getAllDataPaths(const QString &append)
     QString paths = qgetenv("XDG_DATA_DIRS");
     if(paths.isEmpty())
         paths = "/usr/local/share/:/usr/share/";
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-    list += paths.split(QChar(':'), Qt::SkipEmptyParts);
-#else
     list += paths.split(QChar(':'), QString::SkipEmptyParts);
-#endif
 #endif
     QStringList::iterator iter = list.begin();
     while(iter != list.end())
@@ -453,8 +447,6 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->pulseAllowMovesCheckBox, &QCheckBox::stateChanged, this, &MainWindow::enableApplyButton);
     connect(ui->pulseFixRateCheckBox, &QCheckBox::stateChanged, this, &MainWindow::enableApplyButton);
     connect(ui->pulseAdjLatencyCheckBox, &QCheckBox::stateChanged, this, &MainWindow::enableApplyButton);
-
-    connect(ui->pwireAssumeAudioCheckBox, &QCheckBox::stateChanged, this, &MainWindow::enableApplyButton);
 
     connect(ui->jackAutospawnCheckBox, &QCheckBox::stateChanged, this, &MainWindow::enableApplyButton);
     connect(ui->jackConnectPortsCheckBox, &QCheckBox::stateChanged, this, &MainWindow::enableApplyButton);
@@ -773,9 +765,11 @@ void MainWindow::loadConfig(const QString &fname)
 
     QString hrtfmode{settings.value("hrtf-mode").toString().trimmed()};
     ui->hrtfmodeSlider->setValue(2);
-    ui->hrtfmodeLabel->setText(hrtfModeList[3].name);
-    /* The "basic" mode name is no longer supported. Use "ambi2" instead. */
-    if(hrtfmode == "basic")
+    ui->hrtfmodeLabel->setText(hrtfModeList[2].name);
+    /* The "basic" mode name is no longer supported, and "ambi3" is temporarily
+     * disabled. Use "ambi2" instead.
+     */
+    if(hrtfmode == "basic" || hrtfmode == "ambi3")
         hrtfmode = "ambi2";
     for(int i = 0;hrtfModeList[i].name[0];i++)
     {
@@ -927,9 +921,6 @@ void MainWindow::loadConfig(const QString &fname)
     ui->pulseAllowMovesCheckBox->setCheckState(getCheckState(settings.value("pulse/allow-moves")));
     ui->pulseFixRateCheckBox->setCheckState(getCheckState(settings.value("pulse/fix-rate")));
     ui->pulseAdjLatencyCheckBox->setCheckState(getCheckState(settings.value("pulse/adjust-latency")));
-
-    ui->pwireAssumeAudioCheckBox->setCheckState(settings.value("pipewire/assume-audio").toBool()
-        ? Qt::Checked : Qt::Unchecked);
 
     ui->jackAutospawnCheckBox->setCheckState(getCheckState(settings.value("jack/spawn-server")));
     ui->jackConnectPortsCheckBox->setCheckState(getCheckState(settings.value("jack/connect-ports")));
@@ -1139,9 +1130,6 @@ void MainWindow::saveConfig(const QString &fname) const
     settings.setValue("pulse/allow-moves", getCheckValue(ui->pulseAllowMovesCheckBox));
     settings.setValue("pulse/fix-rate", getCheckValue(ui->pulseFixRateCheckBox));
     settings.setValue("pulse/adjust-latency", getCheckValue(ui->pulseAdjLatencyCheckBox));
-
-    settings.setValue("pipewire/assume-audio", ui->pwireAssumeAudioCheckBox->isChecked()
-        ? QString{"true"} : QString{/*"false"*/});
 
     settings.setValue("jack/spawn-server", getCheckValue(ui->jackAutospawnCheckBox));
     settings.setValue("jack/connect-ports", getCheckValue(ui->jackConnectPortsCheckBox));

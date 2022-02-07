@@ -469,21 +469,21 @@ ALC_API ALCboolean ALC_APIENTRY alcMakeContextCurrent(ALCcontext *context)
      */
     if(idx < 0)
     {
-        DriverIface *oldiface = GetThreadDriver();
+        DriverIface *oldiface = ThreadCtxDriver;
         if(oldiface) oldiface->alcSetThreadContext(nullptr);
         oldiface = CurrentCtxDriver.exchange(nullptr);
         if(oldiface) oldiface->alcMakeContextCurrent(nullptr);
     }
     else
     {
-        DriverIface *oldiface = GetThreadDriver();
+        DriverIface *oldiface = ThreadCtxDriver;
         if(oldiface && oldiface != &DriverList[idx])
             oldiface->alcSetThreadContext(nullptr);
         oldiface = CurrentCtxDriver.exchange(&DriverList[idx]);
         if(oldiface && oldiface != &DriverList[idx])
             oldiface->alcMakeContextCurrent(nullptr);
     }
-    SetThreadDriver(nullptr);
+    ThreadCtxDriver = nullptr;
 
     return ALC_TRUE;
 }
@@ -526,7 +526,7 @@ ALC_API void ALC_APIENTRY alcDestroyContext(ALCcontext *context)
 
 ALC_API ALCcontext* ALC_APIENTRY alcGetCurrentContext(void)
 {
-    DriverIface *iface = GetThreadDriver();
+    DriverIface *iface = ThreadCtxDriver;
     if(!iface) iface = CurrentCtxDriver.load();
     return iface ? iface->alcGetCurrentContext() : nullptr;
 }
@@ -932,10 +932,10 @@ ALC_API ALCboolean ALC_APIENTRY alcSetThreadContext(ALCcontext *context)
 
     if(!context)
     {
-        DriverIface *oldiface = GetThreadDriver();
+        DriverIface *oldiface = ThreadCtxDriver;
         if(oldiface && !oldiface->alcSetThreadContext(nullptr))
             return ALC_FALSE;
-        SetThreadDriver(nullptr);
+        ThreadCtxDriver = nullptr;
         return ALC_TRUE;
     }
 
@@ -944,10 +944,10 @@ ALC_API ALCboolean ALC_APIENTRY alcSetThreadContext(ALCcontext *context)
     {
         if(DriverList[idx].alcSetThreadContext(context))
         {
-            DriverIface *oldiface = GetThreadDriver();
+            DriverIface *oldiface = ThreadCtxDriver;
             if(oldiface != &DriverList[idx])
             {
-                SetThreadDriver(&DriverList[idx]);
+                ThreadCtxDriver = &DriverList[idx];
                 if(oldiface) oldiface->alcSetThreadContext(nullptr);
             }
             return ALC_TRUE;
@@ -960,7 +960,7 @@ ALC_API ALCboolean ALC_APIENTRY alcSetThreadContext(ALCcontext *context)
 
 ALC_API ALCcontext* ALC_APIENTRY alcGetThreadContext(void)
 {
-    DriverIface *iface = GetThreadDriver();
+    DriverIface *iface = ThreadCtxDriver;
     if(iface) return iface->alcGetThreadContext();
     return nullptr;
 }

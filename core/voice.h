@@ -3,7 +3,6 @@
 
 #include <array>
 #include <atomic>
-#include <bitset>
 #include <memory>
 #include <stddef.h>
 #include <string>
@@ -165,17 +164,13 @@ struct VoicePropsItem : public VoiceProps {
     DEF_NEWDEL(VoicePropsItem)
 };
 
-enum : uint {
-    VoiceIsStatic,
-    VoiceIsCallback,
-    VoiceIsAmbisonic,
-    VoiceCallbackStopped,
-    VoiceIsFading,
-    VoiceHasHrtf,
-    VoiceHasNfc,
-
-    VoiceFlagCount
-};
+constexpr uint VoiceIsStatic{       1u<<0};
+constexpr uint VoiceIsCallback{     1u<<1};
+constexpr uint VoiceIsAmbisonic{    1u<<2}; /* Needs HF scaling for ambisonic upsampling. */
+constexpr uint VoiceCallbackStopped{1u<<3};
+constexpr uint VoiceIsFading{       1u<<4}; /* Use gain stepping for smooth transitions. */
+constexpr uint VoiceHasHrtf{        1u<<5};
+constexpr uint VoiceHasNfc{         1u<<6};
 
 struct Voice {
     enum State {
@@ -229,7 +224,7 @@ struct Voice {
 
     InterpState mResampleState;
 
-    std::bitset<VoiceFlagCount> mFlags{};
+    uint mFlags{};
     uint mNumCallbackSamples{0};
 
     struct TargetData {
